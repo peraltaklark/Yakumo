@@ -72,6 +72,16 @@ struct Settings {
     PerfDisplay perf{PerfDisplay::Off};
     GpuCompat gpu_compat{GpuCompat::Auto};
 
+    // Additional host-rendered silhouettes (GPU by default when enabled).
+    bool shadows_enabled{};
+    bool shadows_gpu{true};
+    bool shadows_hide_original{true};
+    std::uint32_t shadows_resolution{192u};
+    float shadows_opacity{0.25f};
+    float shadows_x{0.45f};
+    float shadows_z{0.30f};
+    float shadows_floor{};
+
     // Text
     std::string font;              // the game's text font: path, "#face" for a collection; empty: the default
     std::uint32_t font_weight{1u}; // columns the game's glyphs are thickened by, 0 to kMaxFontWeight

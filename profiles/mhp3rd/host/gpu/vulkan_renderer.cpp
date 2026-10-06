@@ -1,6 +1,8 @@
 #include "vulkan_renderer.hpp"
 
 #include "frame_interpolation.hpp"
+#include "planar_shadows.hpp"
+#include "shadow_gpu.hpp"
 #include "frame_pacing.hpp"
 #include "game_hud.hpp"
 #include "replacement_textures.hpp"
@@ -680,6 +682,8 @@ struct VulkanRenderer::Impl {
     [[nodiscard]] VkDescriptorSet ui_copy(const GuestMemory &memory, const DrawCall &call, const Texture &texture);
     void drop_ui_copies();
 
+    PlanarShadows planar_shadows;
+    ShadowGpu shadow_gpu;
     RendererConfig config;
     SDL_Window *window{};
     VkInstance instance{};
@@ -6552,6 +6556,17 @@ void VulkanRenderer::begin_frame() {
     Impl &impl = *impl_;
     if (!impl.ready || impl.recording) return;
     if (impl.health->compat_wanted.load(std::memory_order_relaxed)) impl.apply_compat_request();
+    const auto &shadow_settings=settings::current();
+    auto &shadow_options=impl.planar_shadows.options;
+    shadow_options.enabled=shadow_settings.shadows_enabled;
+    shadow_options.gpu=shadow_settings.shadows_gpu;
+    shadow_options.hide_original=shadow_settings.shadows_hide_original;
+    shadow_options.resolution=shadow_settings.shadows_resolution;
+    shadow_options.opacity=shadow_settings.shadows_opacity;
+    shadow_options.direction_x=shadow_settings.shadows_x;
+    shadow_options.direction_z=shadow_settings.shadows_z;
+    shadow_options.floor_offset=shadow_settings.shadows_floor;
+    impl.planar_shadows.begin_frame(impl.frames);
     // The next slot: its fence is the frame slot_count frames back.
     impl.slot = (impl.slot + 1u) % impl.slot_count;
     Impl::FrameSlot &frame = impl.slots[impl.slot];
@@ -6613,6 +6628,7 @@ void VulkanRenderer::begin_frame() {
     }
     frame.region = region;
     impl.enter_region(region);
+    impl.shadow_gpu.begin(region);
     if (impl.interpolating && !impl.recording_frame.recorded) {
         impl.recording_frame.clear();
         impl.recording_frame.recorded = true;
@@ -6719,7 +6735,7 @@ bool VulkanRenderer::gpu_decode() const {
         std::getenv("MHP3RD_CHECK_DIRECT_VERTICES") != nullptr || std::getenv("MHP3RD_TRACE_GE") != nullptr ||
         std::getenv("MHP3RD_TRACE_3D") != nullptr || std::getenv("MHP3RD_TRACE_SPRITES") != nullptr ||
         std::getenv("MHP3RD_TRACE_LIGHTING") != nullptr || std::getenv("MHP3RD_TRACE_FB_TEXTURES") != nullptr;
-    return !off && !needs_vertices && !perf::alternate_off(perf::NewPath::Direct) &&
+    return !settings::current().shadows_enabled && !off && !needs_vertices && !perf::alternate_off(perf::NewPath::Direct) &&
         !perf::alternate_off(perf::NewPath::GpuDecode);
 }
 
@@ -6750,6 +6766,39 @@ void VulkanRenderer::submit(const DrawCall &call, const GuestMemory &memory) {
     if (!impl.ready) return;
     const perf::SplitScope split(perf::Split::Draw);
     if (!impl.recording) begin_frame();
+    // Finish the scene's silhouettes before its first 2D overlay. The native
+    // game has no entity IDs in GE draws; see planar_shadows.hpp for the
+    // conservative caster heuristic and its deliberately opt-in limitations.
+    if (impl.planar_shadows.options.enabled && !impl.planar_shadows.drawing) {
+        if (call.clear_mode) impl.planar_shadows.clear_target(call.target.color_address);
+        else if (call.through) {
+            auto shadows = impl.planar_shadows.take(call.target.color_address);
+            impl.planar_shadows.drawing = true;
+            for (const auto &shadow : shadows) submit(shadow, memory);
+            impl.planar_shadows.drawing = false;
+        }
+        impl.planar_shadows.collect(call);
+    }
+    if(impl.planar_shadows.hides_original(call)) return;
+    VkDescriptorSet shadow_descriptor=VK_NULL_HANDLE;
+    const bool gpu_shadow=impl.planar_shadows.drawing && impl.planar_shadows.options.gpu && call.texture.function==6;
+    if(gpu_shadow) {
+        const auto index=call.texture.address-0xF1000000u;
+        if(index>=impl.planar_shadows.mask_jobs.size()) return;
+        impl.end_pass();
+        try {
+            impl.shadow_gpu.initialize(impl.device,impl.physical_device,impl.queue_family,
+                impl.descriptor_layout,impl.clamp_sampler,kShadowMaskShader,sizeof(kShadowMaskShader));
+            const auto &job=impl.planar_shadows.mask_jobs[index];
+            shadow_descriptor=impl.shadow_gpu.render(impl.command_buffer,job.resolution,job.points);
+        } catch(const std::exception &e) {
+            static bool reported=false;
+            if(!reported) {std::cerr<<"[shadows-gpu] "<<e.what()<<"; use MHP3RD_SHADOW_GPU=0\n";reported=true;}
+            return;
+        }
+        if(shadow_descriptor==VK_NULL_HANDLE) return;
+        impl.forget_bindings();
+    }
     // Presents between flips fall due while the game draws, too: a busy
     // frame spends most of its time in here.
     if (impl.cycle_active && (++impl.draws_since_poll & 15u) == 0u)
@@ -7202,7 +7251,7 @@ void VulkanRenderer::submit(const DrawCall &call, const GuestMemory &memory) {
     // target: the pixels never reach guest memory, which holds whatever was
     // there before. MHP3RD_NO_FB_TEXTURES decodes guest memory as before.
     static const bool no_fb_textures = std::getenv("MHP3RD_NO_FB_TEXTURES") != nullptr;
-    const Impl::FramebufferTexture framebuffer_source = call.texture.enabled && !call.clear_mode && !no_fb_textures
+    const Impl::FramebufferTexture framebuffer_source = call.texture.enabled && !call.clear_mode && !no_fb_textures && !gpu_shadow
         ? impl.find_framebuffer_texture(memory, call.texture)
         : Impl::FramebufferTexture{};
 
@@ -7339,6 +7388,9 @@ void VulkanRenderer::submit(const DrawCall &call, const GuestMemory &memory) {
         key.cull = call.culling_enabled && !call.through && call.primitive != PrimitiveType::Sprites;
         key.cull_clockwise = call.cull_clockwise;
     }
+    // Synthetic silhouettes leave the framebuffer alpha untouched.
+    if (impl.planar_shadows.drawing)
+        key.color_mask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT;
     // Matches texture_params.w below: without an alpha test the pipeline's
     // shader has no discard. MHP3RD_NO_ALPHA_VARIANTS keeps the one shader
     // that tests alpha for every draw, as before.
@@ -7375,7 +7427,8 @@ void VulkanRenderer::submit(const DrawCall &call, const GuestMemory &memory) {
     if (trace_fb && call.texture.enabled && !call.clear_mode) impl.trace_framebuffer_texture(call);
 
     VkDescriptorSet texture_descriptor = impl.white_texture.descriptor;
-    if (call.texture.enabled && !call.clear_mode) {
+    if (gpu_shadow) texture_descriptor=shadow_descriptor;
+    else if (call.texture.enabled && !call.clear_mode) {
         const Impl::FramebufferTexture &source = framebuffer_source;
         const VkDescriptorSet copy = source.target != nullptr
             ? impl.framebuffer_descriptor(*source.target, call.texture.format == TextureFormat::Rgba5650)
@@ -7607,6 +7660,15 @@ void VulkanRenderer::submit(const DrawCall &call, const GuestMemory &memory) {
 void VulkanRenderer::write_back_frame(GuestMemory &memory) {
     Impl &impl = *impl_;
     if (!impl.ready) return;
+    // Scenes without a through-mode HUD still get their pending silhouettes.
+    if (impl.recording && impl.planar_shadows.options.enabled) {
+        for (const auto target : impl.planar_shadows.pending_targets()) {
+            auto shadows = impl.planar_shadows.take(target);
+            impl.planar_shadows.drawing = true;
+            for (const auto &shadow : shadows) submit(shadow, memory);
+            impl.planar_shadows.drawing = false;
+        }
+    }
     // The frame before this one, still in flight with two slots: its
     // pixels reach guest memory now, as they did when each frame was waited
     // for before the next was recorded.
@@ -8925,6 +8987,7 @@ void VulkanRenderer::shutdown() {
     }
     Impl &impl = *impl_;
     vkDeviceWaitIdle(impl.device);
+    impl.shadow_gpu.shutdown();
     // The interface may still be up when the game quits from its menu.
     if (impl.ui_ready && ImGui::GetCurrentContext() != nullptr) ImGui_ImplVulkan_Shutdown();
     impl.ui_ready = false;

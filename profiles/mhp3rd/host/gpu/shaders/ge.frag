@@ -52,6 +52,17 @@ vec2 sharp_bilinear(vec2 uv) {
 }
 
 void main() {
+    // Host shadow receiver: filter a GPU-generated union mask. This branch
+    // uses a private function value, never a guest texture function.
+    if (push.texture_params.y == 6.0) {
+        if(any(lessThan(frag_texcoord,vec2(0))) || any(greaterThan(frag_texcoord,vec2(1)))) discard;
+        vec2 step_uv=1.0/vec2(textureSize(guest_texture,0));
+        float coverage=0.0;
+        for(int y=-1;y<=1;++y) for(int x=-1;x<=1;++x)
+            coverage+=texture(guest_texture,frag_texcoord+vec2(x,y)*step_uv).a;
+        out_color=vec4(0,0,0,frag_color.a*coverage/9.0);
+        return;
+    }
     vec4 color = frag_color;
     if (push.texture_params.x > 0.5) {
         vec2 uv = push.texture_params.x > 1.5 ? sharp_bilinear(frag_texcoord) : frag_texcoord;

@@ -433,6 +433,41 @@ void Menu::video() {
         }
     }
     texture_pack_rows();
+    section("Additional shadows");
+    if(choice_row("Silhouette shadows",s.shadows_enabled?"On":"Off",
+        options_for("video.shadows_enabled","Animated silhouettes for hunters and monsters. Applies when play resumes."))) {
+        s.shadows_enabled=!s.shadows_enabled;settings::save();
+    }
+    if(choice_row("Shadow processing",s.shadows_gpu?"GPU":"CPU",
+        options_for("video.shadows_gpu","GPU generates and filters the shadow mask. CPU is available for comparison."))) {
+        s.shadows_gpu=!s.shadows_gpu;settings::save();
+    }
+    {
+        static const std::array<std::uint32_t,3> values{64,96,192};
+        const std::string label=s.shadows_resolution==64?"Low (64)":s.shadows_resolution==96?"Medium (96)":
+            s.shadows_resolution==192?"High (192)":std::to_string(s.shadows_resolution);
+        if(int delta=choice_row("Shadow quality",label,options_for("video.shadows_resolution","Higher quality uses more processing time."))) {
+            int index=0;for(int i=0;i<3;++i) if(values[i]<=s.shadows_resolution) index=i;
+            s.shadows_resolution=values[cycle(index,delta,3)];settings::save();
+        }
+    }
+    if(int delta=choice_row("Shadow opacity",std::to_string(int(std::lround(s.shadows_opacity*100)))+"%",
+        options_for("video.shadows_opacity","Opacity from 0 to 60 percent."))) {
+        s.shadows_opacity=std::clamp(s.shadows_opacity+delta*.05f,0.0f,.6f);settings::save();
+    }
+    if(int delta=choice_row("Shadow direction X",std::to_string(int(std::lround(s.shadows_x*100))),
+        options_for("video.shadows_x","Projection along the world X axis, in hundredths. Range -200 to 200."))) {
+        s.shadows_x=std::clamp(s.shadows_x+delta*.05f,-2.0f,2.0f);settings::save();
+    }
+    if(int delta=choice_row("Shadow direction Z",std::to_string(int(std::lround(s.shadows_z*100))),
+        options_for("video.shadows_z","Projection along the world Z axis, in hundredths. Range -200 to 200."))) {
+        s.shadows_z=std::clamp(s.shadows_z+delta*.05f,-2.0f,2.0f);settings::save();
+    }
+    if(choice_row("Hide original circles",s.shadows_hide_original?"On":"Off",
+        options_for("video.shadows_hide_original","Hide matching original circle shadows only while silhouette shadows are active."))) {
+        s.shadows_hide_original=!s.shadows_hide_original;settings::save();
+    }
+
     section("Timing");
     {
         struct Mode {
@@ -614,6 +649,14 @@ void Menu::video() {
         restore("video.aspect", s.aspect, d.aspect);
         restore("video.sharp_screen", s.sharp_screen, d.sharp_screen);
         restore("video.sharp_textures", s.sharp_textures, d.sharp_textures);
+        restore("video.shadows_enabled", s.shadows_enabled, d.shadows_enabled);
+        restore("video.shadows_gpu", s.shadows_gpu, d.shadows_gpu);
+        restore("video.shadows_hide_original", s.shadows_hide_original, d.shadows_hide_original);
+        restore("video.shadows_resolution", s.shadows_resolution, d.shadows_resolution);
+        restore("video.shadows_opacity", s.shadows_opacity, d.shadows_opacity);
+        restore("video.shadows_x", s.shadows_x, d.shadows_x);
+        restore("video.shadows_z", s.shadows_z, d.shadows_z);
+        restore("video.shadows_floor", s.shadows_floor, d.shadows_floor);
         restore("video.ui_textures", s.ui_textures, d.ui_textures);
         restore("video.texture_pack", s.texture_pack, d.texture_pack);
         restore("video.gpu_compat", s.gpu_compat, d.gpu_compat);

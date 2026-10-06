@@ -4,6 +4,7 @@
 #include "platform/utf8_path.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -187,6 +188,38 @@ const std::vector<Field> &fields() {
         {"video.window_scale", nullptr,
             [](Settings &s, const std::string &t) { return parse_uint(t, 1u, kMaxWindowScale, s.window_scale); },
             [](const Settings &s) { return std::to_string(s.window_scale); }, nullptr},
+        {"video.shadows_enabled", "MHP3RD_PLANAR_SHADOWS",
+         [](Settings &s, const std::string &t) { return parse_bool(t, s.shadows_enabled); },
+         [](const Settings &s) { return std::string(s.shadows_enabled ? "1" : "0"); },
+         [](Settings &s, const char *t) { s.shadows_enabled = variable_flag(t); }},
+        {"video.shadows_gpu", "MHP3RD_SHADOW_GPU",
+         [](Settings &s, const std::string &t) { return parse_bool(t, s.shadows_gpu); },
+         [](const Settings &s) { return std::string(s.shadows_gpu ? "1" : "0"); },
+         [](Settings &s, const char *t) { s.shadows_gpu = variable_flag(t); }},
+        {"video.shadows_hide_original", "MHP3RD_KEEP_ORIGINAL_SHADOWS",
+         [](Settings &s, const std::string &t) { return parse_bool(t, s.shadows_hide_original); },
+         [](const Settings &s) { return std::string(s.shadows_hide_original ? "1" : "0"); },
+         [](Settings &s, const char *t) { s.shadows_hide_original = !variable_flag(t); }},
+        {"video.shadows_resolution", "MHP3RD_SHADOW_RESOLUTION",
+         [](Settings &s, const std::string &t) { return parse_uint(t, 32u, 192u, s.shadows_resolution); },
+         [](const Settings &s) { return std::to_string(s.shadows_resolution); },
+         [](Settings &s, const char *t) { parse_uint(t, 32u, 192u, s.shadows_resolution); }},
+        {"video.shadows_opacity", "MHP3RD_SHADOW_OPACITY",
+         [](Settings &s, const std::string &t) { float v=s.shadows_opacity; if(!parse_float(t, 0.0f, 0.6f, v) || !std::isfinite(v)) return false; s.shadows_opacity=v; return true; },
+         [](const Settings &s) { return std::to_string(s.shadows_opacity); },
+         [](Settings &s, const char *t) { float v=s.shadows_opacity; if(parse_float(t, 0.0f, 0.6f, v) && std::isfinite(v)) s.shadows_opacity=v; }},
+        {"video.shadows_x", "MHP3RD_SHADOW_X",
+         [](Settings &s, const std::string &t) { float v=s.shadows_x; if(!parse_float(t, -2.0f, 2.0f, v) || !std::isfinite(v)) return false; s.shadows_x=v; return true; },
+         [](const Settings &s) { return std::to_string(s.shadows_x); },
+         [](Settings &s, const char *t) { float v=s.shadows_x; if(parse_float(t, -2.0f, 2.0f, v) && std::isfinite(v)) s.shadows_x=v; }},
+        {"video.shadows_z", "MHP3RD_SHADOW_Z",
+         [](Settings &s, const std::string &t) { float v=s.shadows_z; if(!parse_float(t, -2.0f, 2.0f, v) || !std::isfinite(v)) return false; s.shadows_z=v; return true; },
+         [](const Settings &s) { return std::to_string(s.shadows_z); },
+         [](Settings &s, const char *t) { float v=s.shadows_z; if(parse_float(t, -2.0f, 2.0f, v) && std::isfinite(v)) s.shadows_z=v; }},
+        {"video.shadows_floor", "MHP3RD_SHADOW_FLOOR_OFFSET",
+         [](Settings &s, const std::string &t) { float v=s.shadows_floor; if(!parse_float(t, -1000.0f, 1000.0f, v) || !std::isfinite(v)) return false; s.shadows_floor=v; return true; },
+         [](const Settings &s) { return std::to_string(s.shadows_floor); },
+         [](Settings &s, const char *t) { float v=s.shadows_floor; if(parse_float(t, -1000.0f, 1000.0f, v) && std::isfinite(v)) s.shadows_floor=v; }},
         BOOL_FIELD("video.fullscreen", fullscreen),
         {"video.present_mode", nullptr,
             [](Settings &s, const std::string &t) { return kPresentModes.parse(t, s.present_mode); },

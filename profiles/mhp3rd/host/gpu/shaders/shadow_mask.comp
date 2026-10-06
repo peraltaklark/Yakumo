@@ -1,0 +1,24 @@
+#version 450
+layout(local_size_x=8,local_size_y=8) in;
+layout(std430,set=0,binding=0) readonly buffer Triangles { vec4 points[]; } input_data;
+layout(rgba8,set=0,binding=1) writeonly uniform image2D mask_image;
+layout(push_constant) uniform Params { uint triangles; uint resolution; } params;
+float edge(vec2 a,vec2 b,vec2 p){return (b.x-a.x)*(p.y-a.y)-(b.y-a.y)*(p.x-a.x);}
+void main(){
+ uvec2 cell=gl_GlobalInvocationID.xy;
+ if(any(greaterThanEqual(cell,uvec2(params.resolution)))) return;
+ uint covered=0u;
+ for(uint i=0u;i<params.triangles && covered!=15u;++i){
+  vec2 a=input_data.points[i*3u].xy,b=input_data.points[i*3u+1u].xy,c=input_data.points[i*3u+2u].xy;
+  vec2 lo=min(a,min(b,c)),hi=max(a,max(b,c));
+  if(any(lessThan(vec2(cell)+vec2(.75),lo)) || any(greaterThan(vec2(cell)+vec2(.25),hi))) continue;
+  if(abs(edge(a,b,c))<1e-7) continue;
+  for(uint j=0u;j<4u;++j){
+   if((covered&(1u<<j))!=0u) continue;
+   vec2 p=vec2(cell)+vec2((j&1u)!=0u?.75:.25,(j&2u)!=0u?.75:.25);
+   vec3 e=vec3(edge(a,b,p),edge(b,c,p),edge(c,a,p));
+   if(all(greaterThanEqual(e,vec3(0))) || all(lessThanEqual(e,vec3(0)))) covered|=1u<<j;
+  }
+ }
+ imageStore(mask_image,ivec2(cell),vec4(0,0,0,float(bitCount(covered))*.25));
+}

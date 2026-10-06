@@ -99,7 +99,8 @@ if(MHP3RD_RENDERER)
             "kGeRawVertexShader=GE_RAW_VERTICES@${MHP3RD_PROFILE_DIR}/host/gpu/shaders/ge.vert"
             "kGeCheckVertexShader=GE_RAW_VERTICES,GE_CHECK_DECODE@${MHP3RD_PROFILE_DIR}/host/gpu/shaders/ge.vert"
             "kGeFragmentShader=${MHP3RD_PROFILE_DIR}/host/gpu/shaders/ge.frag"
-            "kGeFragmentShaderPlain=GE_NO_SPECIALIZATION@${MHP3RD_PROFILE_DIR}/host/gpu/shaders/ge.frag")
+            "kGeFragmentShaderPlain=GE_NO_SPECIALIZATION@${MHP3RD_PROFILE_DIR}/host/gpu/shaders/ge.frag"
+            "kShadowMaskShader=${MHP3RD_PROFILE_DIR}/host/gpu/shaders/shadow_mask.comp")
         if(ANDROID)
             # Pre-rotation of the finished frame for a display turned sideways.
             list(APPEND MHP3RD_SHADERS
