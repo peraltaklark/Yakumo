@@ -1,0 +1,90 @@
+name: Android build
+on: workflow_dispatch
+permissions:
+  contents: read
+env:
+  CCACHE_MAXSIZE: 7G
+  CCACHE_COMPRESS: "1"
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: mod/shadows-menu
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build ccache pkg-config
+      - uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-android-${{ github.run_id }}
+          restore-keys: ccache-android-
+      - name: Download ISO
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download game-data --repo "$GITHUB_REPOSITORY" --pattern MHP3RD.iso --dir "$RUNNER_TEMP"
+      - name: Host bootstrap, install, generate
+        run: |
+          cmake -S . -B out/mhp3rd -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DPSPRECOMP_PROFILE=mhp3rd -DMHP3RD_RENDERER=OFF -DMHP3RD_FFMPEG=OFF
+          cmake --build out/mhp3rd --target Yakumo
+          export MHP3RD_DATA_DIR="$RUNNER_TEMP/data"
+          out/mhp3rd/bin/Yakumo --install "$RUNNER_TEMP/MHP3RD.iso" --in-place
+          profiles/mhp3rd/scripts/prepare_game.sh "$RUNNER_TEMP/MHP3RD.iso" "$MHP3RD_DATA_DIR/EBOOT.ELF"
+          profiles/mhp3rd/scripts/generate.sh
+      - name: Overlay corpora
+        run: |
+          ext=profiles/mhp3rd/analysis/overlays
+          mkdir -p "$ext"
+          python3 profiles/mhp3rd/tools/databin.py "$RUNNER_TEMP/MHP3RD.iso" extract-overlays "$ext" > /dev/null
+          for image in "$ext"/overlay_*.bin; do
+            stem="$(basename "$image" .bin)"; rest="${stem#overlay_}"; base="${rest%%_*}"
+            python3 profiles/mhp3rd/tools/add_overlay.py --no-build out/mhp3rd "$image" "0x$base" > /dev/null
+          done
+          ls profiles/mhp3rd/overlays/*/meta.txt | wc -l
+      - name: SDL3 for Android
+        run: |
+          source profiles/mhp3rd/packaging/linux/sources.sh
+          ndk="$ANDROID_HOME/ndk/28.2.13676358"
+          mkdir -p out/sdl3 && cd out/sdl3
+          curl -fsSL -o sdl3.tar.gz "$SDL3_URL"
+          echo "$SDL3_SHA256  sdl3.tar.gz" | sha256sum -c
+          tar -xzf sdl3.tar.gz
+          cmake -S "SDL3-$SDL3_VERSION" -B build -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$ndk/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-29 -DCMAKE_BUILD_TYPE=Release \
+            -DSDL_SHARED=ON -DSDL_STATIC=OFF -DSDL_TEST_LIBRARY=OFF -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF \
+            -DCMAKE_INSTALL_PREFIX="$PWD/install"
+          cmake --build build -j4
+          cmake --install build
+      - name: Configure Android
+        run: |
+          sdl="$PWD/out/sdl3/install"
+          cmake -S . -B out/android-app -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_HOME/ndk/28.2.13676358/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-29 -DCMAKE_BUILD_TYPE=Release \
+            -DPSPRECOMP_PROFILE=mhp3rd -DMHP3RD_ANDROID_APP=ON \
+            -DSDL3_DIR="$sdl/lib/cmake/SDL3" -DCMAKE_FIND_ROOT_PATH="$sdl"
+      - name: Compile (stops itself before the 6 hour limit)
+        id: compile
+        run: |
+          set +e
+          timeout --signal=INT 300m cmake --build out/android-app -j4
+          echo "code=$?" >> "$GITHUB_OUTPUT"
+          exit 0
+      - name: Save compiler cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-android-${{ github.run_id }}
+      - name: Result
+        if: always()
+        run: |
+          echo "build exit code: ${{ steps.compile.outputs.code }} (0 = finished, 124 = timed out, run again)"
+          ls out/android-app/bin/overlays/libovl*.so 2>/dev/null | wc -l
+          ls -l out/android-app/bin/ 2>/dev/null | head
+          ccache -s | head -12
