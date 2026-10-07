@@ -1,0 +1,38 @@
+name: Generate test
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  generate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: mod/shadows-menu
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build ccache pkg-config
+      - name: Download ISO
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download game-data --repo "$GITHUB_REPOSITORY" --pattern MHP3RD.iso --dir "$RUNNER_TEMP"
+      - name: Bootstrap build
+        run: |
+          cmake -S . -B out/mhp3rd -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DPSPRECOMP_PROFILE=mhp3rd -DMHP3RD_RENDERER=OFF -DMHP3RD_FFMPEG=OFF
+          cmake --build out/mhp3rd --target Yakumo
+      - name: Prepare executable from ISO
+        run: |
+          export MHP3RD_DATA_DIR="$RUNNER_TEMP/data"
+          out/mhp3rd/bin/Yakumo --install "$RUNNER_TEMP/MHP3RD.iso" --in-place
+          find "$MHP3RD_DATA_DIR" -maxdepth 2 | head -20
+          profiles/mhp3rd/scripts/prepare_game.sh "$RUNNER_TEMP/MHP3RD.iso" "$MHP3RD_DATA_DIR/EBOOT.ELF"
+      - name: Generate
+        run: profiles/mhp3rd/scripts/generate.sh
+      - name: Sizes
+        run: |
+          ls profiles/mhp3rd/generated | wc -l
+          du -sh profiles/mhp3rd/generated profiles/mhp3rd/analysis
+          nproc; free -g
