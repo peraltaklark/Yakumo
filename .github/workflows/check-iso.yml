@@ -1,0 +1,19 @@
+name: Check game data
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  check-iso:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download ISO from the private release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download game-data --repo "$GITHUB_REPOSITORY" --pattern MHP3RD.iso --dir .
+          ls -l MHP3RD.iso
+      - name: Check it
+        run: |
+          df -h /
+          sha256sum MHP3RD.iso
+          dd if=MHP3RD.iso bs=1 skip=32769 count=5 2>/dev/null; echo
