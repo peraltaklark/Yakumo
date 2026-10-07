@@ -18,6 +18,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ninja-build ccache pkg-config glslang-tools
+      - name: Ensure NDK 28.2
+        run: |
+          ls "$ANDROID_HOME/ndk" || true
+          tc="$ANDROID_HOME/ndk/28.2.13676358/build/cmake/android.toolchain.cmake"
+          if [ ! -f "$tc" ]; then
+            yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_HOME" "ndk;28.2.13676358" > /dev/null || true
+          fi
+          ls -l "$tc"
       - uses: actions/cache/restore@v4
         with:
           path: ~/.cache/ccache
