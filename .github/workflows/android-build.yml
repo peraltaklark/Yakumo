@@ -16,7 +16,7 @@ jobs:
       - name: Install tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build ccache pkg-config
+          sudo apt-get install -y ninja-build ccache pkg-config glslang-tools
       - uses: actions/cache/restore@v4
         with:
           path: ~/.cache/ccache
