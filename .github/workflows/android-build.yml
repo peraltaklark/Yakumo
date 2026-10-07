@@ -1,7 +1,7 @@
 name: Android build
 on: workflow_dispatch
 permissions:
-  contents: read
+  contents: write
 env:
   CCACHE_MAXSIZE: 7G
   CCACHE_COMPRESS: "1"
@@ -13,6 +13,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: mod/shadows-menu
+          fetch-depth: 0
       - name: Install tools
         run: |
           sudo apt-get update
@@ -88,3 +89,34 @@ jobs:
           ls out/android-app/bin/overlays/libovl*.so 2>/dev/null | wc -l
           ls -l out/android-app/bin/ 2>/dev/null | head
           ccache -s | head -12
+      - name: Signing key (made once, kept in a private release)
+        if: steps.compile.outputs.code == '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p keys
+          if gh release download signing-key --repo "$GITHUB_REPOSITORY" --dir keys 2>/dev/null; then
+            echo "using the saved key"
+          else
+            pass="$(openssl rand -hex 16)"
+            keytool -genkeypair -keystore keys/release.jks -storepass "$pass" -keypass "$pass" \
+              -alias yakumo -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Yakumo local build"
+            echo "$pass" > keys/pass.txt
+            gh release create signing-key keys/release.jks keys/pass.txt \
+              --repo "$GITHUB_REPOSITORY" --title "signing-key" --notes "Do not delete" --prerelease
+          fi
+          printf 'KEYSTORE=%s\nKEYSTORE_PASS=%s\nKEY_ALIAS=yakumo\n' \
+            "$PWD/keys/release.jks" "$(cat keys/pass.txt)" > keys/key.env
+      - name: Package the APK
+        if: steps.compile.outputs.code == '0'
+        run: |
+          profiles/mhp3rd/scripts/release_android.sh out/android-app --version "shadows-${{ github.run_number }}" --jobs 4
+          ls -lh out/release-android/dist
+      - name: Publish APK to a private release
+        if: steps.compile.outputs.code == '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "apk-${{ github.run_number }}" out/release-android/dist/*.apk \
+            --repo "$GITHUB_REPOSITORY" --title "APK ${{ github.run_number }}" \
+            --notes "Yakumo with silhouette shadows" --prerelease
